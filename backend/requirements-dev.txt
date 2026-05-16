@@ -1,0 +1,21 @@
+# Dev requirements — unpinned to let pip resolve Python 3.14 compatibility.
+# See requirements.txt for production pinned versions.
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg2-binary
+pydantic
+pydantic-settings
+pydantic[email]
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
+anthropic
+langchain
+langchain-anthropic
+langgraph
+Pillow
+PyMuPDF
+scikit-learn
+numpy
+google-cloud-storage
