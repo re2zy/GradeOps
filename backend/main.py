@@ -1,11 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from database import engine, Base
 from config import get_settings
 from routers import auth, upload, grade, review
+import os
 
 settings = get_settings()
-
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
@@ -22,11 +23,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+UPLOADS_DIR = os.path.join(os.path.dirname(__file__), "uploads")
+os.makedirs(UPLOADS_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
+
 app.include_router(auth.router)
 app.include_router(upload.router)
 app.include_router(grade.router)
 app.include_router(review.router)
-
 
 @app.get("/health")
 def health():

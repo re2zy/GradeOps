@@ -28,15 +28,14 @@ def node_extract(state: GradingState) -> GradingState:
     try:
         rubric = parse_rubric(state["rubric"])
         results = extract_and_crop_answers(state["pdf_bytes"], len(rubric.questions))
-
         answers = [text for text, _ in results]
         crop_urls = []
         for i, (_, img_bytes) in enumerate(results):
-            url = upload_cropped_image(img_bytes, state["submission_id"], i + 1)
+            url = upload_cropped_image(img_bytes, state["exam_id"], state["submission_id"], i + 1)
             crop_urls.append(url)
-
         return {**state, "extracted_answers": answers, "cropped_image_urls": crop_urls}
     except Exception as exc:
+        print(f"[EXTRACT ERROR] {exc}")
         return {**state, "error": str(exc)}
 
 
@@ -47,6 +46,7 @@ def node_grade(state: GradingState) -> GradingState:
         grades = grade_submission(state["rubric"], state["extracted_answers"])
         return {**state, "grades": grades}
     except Exception as exc:
+        print(f"[GRADE ERROR] {exc}")
         return {**state, "error": str(exc)}
 
 
@@ -57,10 +57,11 @@ def node_plagiarism(state: GradingState) -> GradingState:
         flags = check_submission_plagiarism(
             state["submission_id"],
             state["extracted_answers"],
-            [],  # TODO: pass other submissions' answers from DB
+            [],
         )
         return {**state, "plagiarism_flags": flags}
     except Exception as exc:
+        print(f"[PLAGIARISM ERROR] {exc}")
         return {**state, "error": str(exc)}
 
 
@@ -73,12 +74,10 @@ def build_workflow():
     wf.add_node("extract", node_extract)
     wf.add_node("grade", node_grade)
     wf.add_node("plagiarism", node_plagiarism)
-
     wf.set_entry_point("extract")
     wf.add_conditional_edges("extract", _route, {"continue": "grade", "error": END})
     wf.add_conditional_edges("grade", _route, {"continue": "plagiarism", "error": END})
     wf.add_edge("plagiarism", END)
-
     return wf.compile()
 
 
@@ -146,7 +145,12 @@ async def run_grading_pipeline(
 
     final = await asyncio.to_thread(get_workflow().invoke, initial)
 
+    print(f"[PIPELINE] Error: {final.get('error')}")
+    print(f"[PIPELINE] Grades found: {len(final.get('grades', []))}")
+    print(f"[PIPELINE] Answers found: {len(final.get('extracted_answers', []))}")
+
     if final.get("error"):
+        print(f"[PIPELINE] ERROR: {final['error']}")
         submission.status = SubmissionStatus.error
         db.commit()
     else:

@@ -1,32 +1,30 @@
+import os
 import uuid
-from google.cloud import storage
-from config import get_settings
 
-settings = get_settings()
-_client = None
+UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+def upload_file(file_bytes: bytes, blob_name: str, content_type: str) -> str:
+    safe_name = blob_name.replace("/", "_")
+    path = os.path.join(UPLOAD_DIR, safe_name)
+    with open(path, "wb") as f:
+        f.write(file_bytes)
+    return f"http://localhost:8000/uploads/{safe_name}"
 
-def _get_client() -> storage.Client:
-    global _client
-    if _client is None:
-        _client = storage.Client()
-    return _client
-
-
-def upload_file(file_bytes: bytes, blob_name: str, content_type: str = "application/octet-stream") -> str:
-    client = _get_client()
-    bucket = client.bucket(settings.gcs_bucket_name)
-    blob = bucket.blob(blob_name)
-    blob.upload_from_string(file_bytes, content_type=content_type)
-    blob.make_public()
-    return blob.public_url
-
-
-def upload_exam_pdf(file_bytes: bytes, exam_id: int, student_id: str) -> str:
-    blob_name = f"exams/{exam_id}/submissions/{student_id}/{uuid.uuid4()}.pdf"
+def upload_exam_pdf(file_bytes: bytes, exam_id: int, submission_id: int) -> str:
+    blob_name = f"exam_{exam_id}_submission_{submission_id}_{uuid.uuid4().hex}.pdf"
     return upload_file(file_bytes, blob_name, "application/pdf")
 
+def upload_cropped_image(file_bytes: bytes, exam_id: int, submission_id: int, question_num: int) -> str:
+    blob_name = f"exam_{exam_id}_sub_{submission_id}_q{question_num}_{uuid.uuid4().hex}.png"
+    return upload_file(file_bytes, blob_name, "image/png")
 
-def upload_cropped_image(image_bytes: bytes, submission_id: int, question_num: int) -> str:
-    blob_name = f"crops/submission_{submission_id}/q{question_num}_{uuid.uuid4()}.png"
-    return upload_file(image_bytes, blob_name, "image/png")
+def download_file(blob_name: str) -> bytes:
+    safe_name = blob_name.replace("/", "_")
+    path = os.path.join(UPLOAD_DIR, safe_name)
+    with open(path, "rb") as f:
+        return f.read()
+
+def download_cropped_image(url: str) -> bytes:
+    blob_name = url.replace("local://uploads/", "")
+    return download_file(blob_name)

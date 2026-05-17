@@ -1,27 +1,18 @@
 import io
+import os
+import base64
 from typing import List, Tuple
 from PIL import Image
-import fitz  # PyMuPDF
+import fitz
+from groq import Groq
 
-_model = None
-_processor = None
-MODEL_ID = "Qwen/Qwen-VL-Chat"
+_client = None
 
-
-def _get_model():
-    global _model, _processor
-    if _model is None:
-        import torch
-        from transformers import AutoProcessor, AutoModelForVision2Seq
-        _processor = AutoProcessor.from_pretrained(MODEL_ID, trust_remote_code=True)
-        _model = AutoModelForVision2Seq.from_pretrained(
-            MODEL_ID,
-            trust_remote_code=True,
-            device_map="auto",
-            torch_dtype=torch.float16,
-        )
-    return _model, _processor
-
+def _get_client():
+    global _client
+    if _client is None:
+        _client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+    return _client
 
 def pdf_to_images(pdf_bytes: bytes, dpi: int = 200) -> List[Image.Image]:
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
@@ -33,30 +24,65 @@ def pdf_to_images(pdf_bytes: bytes, dpi: int = 200) -> List[Image.Image]:
         images.append(img)
     return images
 
+def split_page_into_sections(image: Image.Image, num_sections: int) -> List[Image.Image]:
+    width, height = image.size
+    top_offset = int(height * 0.15)
+    usable_height = height - top_offset
+    section_height = usable_height // num_sections
+    sections = []
+    for i in range(num_sections):
+        top = top_offset + (i * section_height)
+        bottom = top_offset + ((i + 1) * section_height) if i < num_sections - 1 else height
+        section = image.crop((0, top, width, bottom))
+        sections.append(section)
+    return sections
 
 def transcribe_image(image: Image.Image) -> str:
-    model, processor = _get_model()
-    prompt = (
-        "You are an OCR assistant for handwritten exam papers. "
-        "Transcribe all visible text exactly as written, preserving structure and question numbers."
+    client = _get_client()
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    image_bytes = buf.getvalue()
+    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+    response = client.chat.completions.create(
+        model="meta-llama/llama-4-scout-17b-16e-instruct",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/png;base64,{image_b64}"
+                        }
+                    },
+                    {
+                        "type": "text",
+                        "text": "Transcribe only the student's answer text visible in this image. Output the transcribed text only, no explanations, no steps, no commentary."
+                    }
+                ]
+            }
+        ],
+        max_tokens=2048,
     )
-    inputs = processor(text=prompt, images=image, return_tensors="pt").to(model.device)
-    with torch.no_grad():
-        output = model.generate(**inputs, max_new_tokens=1024)
-    return processor.decode(output[0], skip_special_tokens=True)
-
+    return response.choices[0].message.content
 
 def image_to_bytes(image: Image.Image) -> bytes:
     buf = io.BytesIO()
     image.save(buf, format="PNG")
     return buf.getvalue()
 
-
 def extract_and_crop_answers(pdf_bytes: bytes, num_questions: int) -> List[Tuple[str, bytes]]:
-    """Returns (transcribed_text, page_png_bytes) for each page of the PDF."""
     images = pdf_to_images(pdf_bytes)
+    full_page = images[0] if images else None
+
+    if full_page is None:
+        return []
+
+    sections = split_page_into_sections(full_page, num_questions)
+
     results = []
-    for img in images:
-        text = transcribe_image(img)
-        results.append((text, image_to_bytes(img)))
+    for section in sections:
+        text = transcribe_image(section)
+        results.append((text, image_to_bytes(section)))
+
     return results
