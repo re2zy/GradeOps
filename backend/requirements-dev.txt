@@ -11,6 +11,7 @@ python-jose[cryptography]
 passlib[bcrypt]
 python-multipart
 anthropic
+groq
 langchain
 langchain-anthropic
 langgraph
